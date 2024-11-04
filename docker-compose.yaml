@@ -1,0 +1,151 @@
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    depends_on:
+      otelcol-contrib:
+        condition: service_started
+    networks:
+      - o11y
+
+  grafana:
+    image: grafana/grafana-oss
+    ports:
+      - "3000:3000"
+    depends_on:
+      prometheus:
+        condition: service_started
+    networks:
+      - o11y
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+    ports:
+      - "9200:9200"
+    environment:
+      - cluster.name=elastic-cluster
+      - "discovery.type=single-node"
+      - xpack.security.enabled=false
+    mem_limit: 1073741824
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -s http://localhost:9200/_cluster/health?pretty",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 120
+    networks:
+      - o11y
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.15.3
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+        restart: true
+    networks:
+      - o11y
+
+  jaeger-collector:
+    image: jaegertracing/jaeger-collector:1.62.0
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "14286:14286"
+      - "14269:14269"
+      - "9411:9411"
+      - "14250:14250"
+    environment:
+      - SPAN_STORAGE_TYPE=elasticsearch
+    command:
+      - "--es.server-urls=http://elasticsearch:9200"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+        restart: true
+    networks:
+      - o11y
+
+  jaeger-query:
+    image: jaegertracing/jaeger-query:1.62.0
+    ports:
+      - "16685:16685"
+      - "16686:16686"
+      - "16687:16687"
+    environment:
+      - SPAN_STORAGE_TYPE=elasticsearch
+    command:
+      - "--es.server-urls=http://elasticsearch:9200"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+        restart: true
+    networks:
+      - o11y
+
+  otelcol-contrib:
+    image: otel/opentelemetry-collector-contrib:0.112.0
+    ports:
+      - "4417:4317"
+      - "4418:4318"
+      - "8888:8888"
+      - "8889:8889"
+      - "55679:55679"
+    volumes:
+      - ./opentelemetry-collector/config.yaml:/etc/otelcol-contrib/config.yaml
+      - ./apache.log:/tmp/apache.log
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+        restart: true
+    networks:
+      - o11y
+
+  microservice-a:
+    image: mustafat/microservice-a:1.0
+    ports:
+      - "8090:8090"
+    environment:
+      - PORT=8090
+      - SVC_B_URI=http://microservice-b:8092
+      - OTEL_COLLECTOR_ENDPOINT=otelcol-contrib:4318
+    depends_on:
+      otelcol-contrib:
+        condition: service_started
+    networks:
+      - o11y
+
+  microservice-b:
+    image: mustafat/microservice-b:1.0
+    ports:
+      - "8092:8092"
+    environment:
+      - PORT=8092
+      - SVC_A_URI=http://microservice-a:8090
+      - OTEL_COLLECTOR_ENDPOINT=otelcol-contrib:4318
+    depends_on:
+      otelcol-contrib:
+        condition: service_started
+    networks:
+      - o11y
+
+volumes:
+  prometheus:
+    driver: local
+  grafana_data:
+    driver: local
+networks:
+  o11y:

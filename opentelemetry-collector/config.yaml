@@ -1,0 +1,51 @@
+extensions:
+  health_check:
+  pprof:
+    endpoint: 0.0.0.0:1777
+  zpages:
+    endpoint: 0.0.0.0:55679
+
+receivers:
+  filelog:
+    include: [ /tmp/apache.log ]
+    start_at: beginning
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+
+exporters:
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+  otlp:
+    endpoint: "jaeger-collector:4317"  # Update as per your Jaeger service
+    tls:
+      insecure: true
+  elasticsearch:
+    endpoints: http://elasticsearch:9200
+  debug:
+    verbosity: detailed
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp]
+
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus]
+
+    logs:
+      receivers: [filelog]
+      processors: [batch]
+      exporters: [elasticsearch]
+
+  extensions: [health_check, pprof, zpages]
